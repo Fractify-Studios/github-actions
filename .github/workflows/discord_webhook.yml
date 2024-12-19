@@ -1,0 +1,52 @@
+name: Discord Webhook Notification
+
+on:
+  workflow_call:
+    inputs:
+      branch:
+        required: true
+        type: string
+    secrets:
+      DISCORD_WEBHOOK_URL:
+        required: true
+
+jobs:
+  notify-discord:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Commit List
+        id: commits
+        run: |
+          COMMIT_LIST=""
+          for commit in $(jq -r '.commits[] | @base64' <<< '${{ toJson(github.event.commits) }}'); do
+            _commit=$(echo "$commit" | base64 --decode)
+            SHA=$(echo "$_commit" | jq -r '.id' | cut -c1-7)
+            MESSAGE=$(echo "$_commit" | jq -r '.message')
+            AUTHOR=$(echo "$_commit" | jq -r '.author.name')
+            COMMIT_LIST="${COMMIT_LIST}[${SHA}](https://github.com/${{ github.repository }}/commit/${SHA}) \"${MESSAGE}\" ~ ${AUTHOR}\n"
+          done
+          echo "commits=$(echo "$COMMIT_LIST" | jq -sRr @json)" >> $GITHUB_ENV
+
+      - name: Send Discord Webhook
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          REPO_NAME: ${{ github.repository }}
+          BRANCH_NAME: ${{ inputs.branch }}
+        run: |
+          curl -H "Content-Type: application/json" \
+          -X POST "$DISCORD_WEBHOOK_URL" \
+          -d '{
+            "content": null,
+            "embeds": [
+              {
+                "title": "New commits just dropped for `'"${REPO_NAME}:${BRANCH_NAME}"'`",
+                "description": '${{ env.commits }}',
+                "url": "https://github.com/${{ github.repository }}",
+                "color": 14291773,
+                "footer": {
+                  "text": "This update was posted"
+                },
+                "timestamp": "${{ github.event.head_commit.timestamp }}"
+              }
+            ]
+          }'
